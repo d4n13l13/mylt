@@ -16,15 +16,15 @@ jobs:
           - os: ubuntu-22.04
             name: mylt-linux
             artifact: dist/mylt-linux
-            extra_args: ""
-          - os: macos-14
-            name: mylt-macos
-            artifact: dist/mylt-macos
-            extra_args: "--target-architecture universal2"
+          - os: macos-15
+            name: mylt-macos-arm64
+            artifact: dist/mylt-macos-arm64
+          - os: macos-15-intel
+            name: mylt-macos-intel
+            artifact: dist/mylt-macos-intel
           - os: windows-latest
             name: mylt-windows
             artifact: dist/mylt-windows.exe
-            extra_args: ""
 
     runs-on: ${{ matrix.os }}
 
@@ -41,7 +41,7 @@ jobs:
         run: pip install pyinstaller
 
       - name: Build binary
-        run: pyinstaller --onefile --name ${{ matrix.name }} ${{ matrix.extra_args }} app.py
+        run: pyinstaller --onefile --name ${{ matrix.name }} app.py
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
