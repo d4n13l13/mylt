@@ -15,16 +15,16 @@ jobs:
         include:
           - os: ubuntu-22.04
             name: mylt-linux
-            artifact: dist/mylt-linux
+            artifact: dist/mylt-linux.zip
           - os: macos-15
             name: mylt-macos-arm64
-            artifact: dist/mylt-macos-arm64
+            artifact: dist/mylt-macos-arm64.zip
           - os: macos-15-intel
             name: mylt-macos-intel
-            artifact: dist/mylt-macos-intel
+            artifact: dist/mylt-macos-intel.zip
           - os: windows-latest
             name: mylt-windows
-            artifact: dist/mylt-windows.exe
+            artifact: dist/mylt-windows.zip
 
     runs-on: ${{ matrix.os }}
 
@@ -42,6 +42,24 @@ jobs:
 
       - name: Build binary
         run: pyinstaller --onefile --name ${{ matrix.name }} app.py
+
+      - name: Package Linux binary
+        if: runner.os == 'Linux'
+        run: |
+          chmod +x dist/${{ matrix.name }}
+          cd dist && zip -r ${{ matrix.name }}.zip ${{ matrix.name }}
+
+      - name: Package macOS binary
+        if: runner.os == 'macOS'
+        run: |
+          mv dist/${{ matrix.name }} dist/${{ matrix.name }}.command
+          chmod +x dist/${{ matrix.name }}.command
+          cd dist && zip -r ${{ matrix.name }}.zip ${{ matrix.name }}.command
+
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/${{ matrix.name }}.exe -DestinationPath dist/${{ matrix.name }}.zip
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
