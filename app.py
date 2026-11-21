@@ -4,8 +4,14 @@ import shutil
 import json
 import subprocess
 import urllib.request
+import ssl
 
-VERSION = "0.1"
+try:
+    import certifi
+except ImportError:
+    certifi = None
+
+VERSION = "0.2"
 GITHUB_REPO = "d4n13l13/mylt"
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".mylt")
 os.makedirs(CONFIG_DIR, exist_ok=True)
@@ -513,7 +519,8 @@ def check_updates():
     url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "mylt-updater"})
-        with urllib.request.urlopen(req, timeout=5) as response:
+        context = ssl.create_default_context(cafile=certifi.where()) if certifi else None
+        with urllib.request.urlopen(req, context=context, timeout=5) as response:
             data = json.loads(response.read().decode("utf-8"))
             latest = data.get("tag_name", "").lstrip("v")
 
