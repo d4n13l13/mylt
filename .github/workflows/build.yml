@@ -38,7 +38,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install PyInstaller
-        run: pip install pyinstaller
+        run: pip install pyinstaller certifi
 
       - name: Build binary
         run: pyinstaller --onefile --name ${{ matrix.name }} app.py
