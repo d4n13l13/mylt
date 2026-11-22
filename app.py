@@ -5,14 +5,15 @@ import json
 import subprocess
 import urllib.request
 import ssl
+import webbrowser
 
 try:
     import certifi
 except ImportError:
     certifi = None
 
-VERSION = "0.2"
-GITHUB_REPO = "d4n13l13/mylt"
+
+VERSION = "0.3"
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".mylt")
 os.makedirs(CONFIG_DIR, exist_ok=True)
 HOSTS_FILE = os.path.join(CONFIG_DIR, "hosts.json")
@@ -44,15 +45,15 @@ def main_menu():
         if favorites:
             print("Favorites:")
             for idx, host in enumerate(favorites, start=1):
-                print(f"[{idx}] {host['name']} ({host['ip']})")
+                print(f" [{idx}] {host['name']} ({host['ip']})")
             print()
     
         print("Menu:")
-        print("[h] Hosts")
-        print("[k] Keys")
-        print("[s] Snippets")
-        print("[u] Update")
-        print("[q] Quit")
+        print(" [h] Hosts")
+        print(" [k] Keys")
+        print(" [s] Snippets")
+        print(" [i] Info & Support")
+        print(" [q] Quit")
         print()
         choice = input("Enter your choice: ").lower()   
 
@@ -62,7 +63,7 @@ def main_menu():
             key_menu()
         elif choice == 's':
             snippet_menu()
-        elif choice == 'u':
+        elif choice == 'i':
             update_menu()
         elif choice == 'q':
             message("Exiting the program.")
@@ -106,11 +107,11 @@ def connect_host(host):
     remote_cmd = build_remote_cmd()
 
     if remote_cmd:
-        subprocess.run(["ssh", "-t", "-p", port, target, remote_cmd])
+        subprocess.run(["ssh", "-t", "-p", port, "-o", "HostKeyAlgorithms=+ssh-rsa", "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa", target, remote_cmd])
     else:
-        subprocess.run(["ssh", "-p", port, target])
+        subprocess.run(["ssh", "-p", port, "-o", "HostKeyAlgorithms=+ssh-rsa", "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa", target])
 
-    input("Connection closed. Press Enter to return to the menu.")
+    message("Connection closed.")
 
 def host_menu():
     while True:
@@ -345,7 +346,7 @@ def send_key_menu():
             pub_key = open(f"{key_path}.pub", encoding="utf-8").read().strip() + "\n"
             cmd = "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
             result = subprocess.run(
-                ["ssh", "-p", str(h["port"]), f"{h['user']}@{h['ip']}", cmd],
+                ["ssh", "-p", str(h["port"]), "-o", "HostKeyAlgorithms=+ssh-rsa", "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa", f"{h['user']}@{h['ip']}", cmd],
                 input=pub_key,
                 text=True
             )
@@ -379,9 +380,9 @@ def snippet_menu():
                 print(f"[{idx}] {snippet['name']}")
         print()
         print("Menu:")
-        print("[a] Add Snippets")
-        print("[e] Edit Snippets")
-        print("[d] Delete Snippets")
+        print("[a] Add Snippet")
+        print("[e] Edit Snippet")
+        print("[d] Delete Snippet")
         print("[b] Back to Main Menu")
         print()
         choice = input("Enter your choice: ").lower()
@@ -487,16 +488,18 @@ def delete_snippet():
 
 def update_menu():
     while True:
-        title(f"Update My Little Terminal - v{VERSION}")
-        print("[c] Check for Updates")
+        title(f"Info & Support - My Little Terminal - v{VERSION}")
+        print("[c] Check for New Version")
+        print("[s] Open Support Forum")
         print("[b] Back to Main Menu")
-        print()
-        print(f"You need support? Visit {GREEN}https://www.boxpirates.to{RESET}")
         print()
         choice = input("Enter your choice: ").lower()
 
         if choice == 'c':
             check_updates()
+        elif choice == 's':
+            message(f"Opening {GREEN}https://www.boxpirates.to{RESET} in browser...")
+            webbrowser.open("https://www.boxpirates.to")
         elif choice == 'b':
             return
         else:
@@ -504,19 +507,12 @@ def update_menu():
 
     
 def check_updates():
-    title("Check for Updates")
+    title("Version Check")
     print(f"Installed version: v{VERSION}")
-
-    if not GITHUB_REPO:
-        print("Update repository not configured yet.")
-        print()
-        input("Press Enter to continue...")
-        return
-
-    print("Checking GitHub for updates...")
+    print("Checking GitHub for latest release...")
     print()
 
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+    url = "https://api.github.com/repos/d4n13l13/mylt/releases/latest"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "mylt-updater"})
         context = ssl.create_default_context(cafile=certifi.where()) if certifi else None
@@ -529,10 +525,13 @@ def check_updates():
             elif latest == VERSION:
                 print("You are already using the latest version!")
             else:
+                download_url = data.get("html_url", "")
                 print(f"New version available: v{latest}")
-                print(f"Download: {data.get('html_url', '')}")
+                if download_url:
+                    print(f"Download: {GREEN}{download_url}{RESET}")
+                    webbrowser.open(download_url)
     except Exception:
-        print("Could not check for updates (offline or repository not published yet).")
+        print("Could not check for new version (offline or repository not published yet).")
 
     print()
     input("Press Enter to continue...")
