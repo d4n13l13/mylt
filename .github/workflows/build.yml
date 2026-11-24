@@ -16,7 +16,7 @@ jobs:
         include:
           - os: ubuntu-22.04
             name: mylt-linux
-            artifact: dist/mylt-linux.zip
+            artifact: dist/My-Little-Terminal-x86_64.AppImage
           - os: macos-15
             name: mylt-macos-arm64
             artifact: dist/mylt-macos-arm64.zip
@@ -44,20 +44,51 @@ jobs:
       - name: Build binary
         run: pyinstaller --onefile --name ${{ matrix.name }} app.py
 
-      - name: Package Linux binary
+      - name: Package Linux AppImage
         if: runner.os == 'Linux'
         run: |
-          chmod +x dist/${{ matrix.name }}
-          cat << 'EOF' > "dist/My Little Terminal.desktop"
+          mkdir -p AppDir/usr/bin
+          mv dist/${{ matrix.name }} AppDir/usr/bin/mylt
+          chmod +x AppDir/usr/bin/mylt
+
+          cat << 'EOF' > AppDir/AppRun
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          BIN="$HERE/usr/bin/mylt"
+
+          if [ -t 0 ]; then
+            exec "$BIN" "$@"
+          fi
+
+          for term in x-terminal-emulator gnome-terminal konsole xfce4-terminal mate-terminal alacritty kitty xterm; do
+            if command -v "$term" >/dev/null 2>&1; then
+              if [ "$term" = "gnome-terminal" ]; then
+                exec "$term" -- "$BIN" "$@"
+              else
+                exec "$term" -e "$BIN" "$@"
+              fi
+            fi
+          done
+          EOF
+          chmod +x AppDir/AppRun
+
+          cat << 'EOF' > AppDir/mylt.desktop
           [Desktop Entry]
           Type=Application
           Name=My Little Terminal
-          Exec=bash -c '"$(dirname "$1")/mylt-linux"' _ %k
+          Exec=AppRun
+          Icon=mylt
           Terminal=true
-          Icon=utilities-terminal
+          Categories=Utility;TerminalEmulator;
           EOF
-          chmod +x "dist/My Little Terminal.desktop"
-          cd dist && zip -r ${{ matrix.name }}.zip ${{ matrix.name }} "My Little Terminal.desktop"
+
+          # Minimales 1x1 PNG als Pflicht-Dummy-Icon für appimagetool
+          python3 -c 'import base64; open("AppDir/mylt.png", "wb").write(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="))'
+
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir "dist/My-Little-Terminal-x86_64.AppImage"
+          chmod +x "dist/My-Little-Terminal-x86_64.AppImage"
 
       - name: Package macOS binary
         if: runner.os == 'macOS'
