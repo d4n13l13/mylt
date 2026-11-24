@@ -6,6 +6,7 @@ import subprocess
 import urllib.request
 import ssl
 import webbrowser
+import sys
 
 try:
     import certifi
@@ -13,12 +14,14 @@ except ImportError:
     certifi = None
 
 
-VERSION = "0.3"
+VERSION = "0.4"
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".mylt")
 os.makedirs(CONFIG_DIR, exist_ok=True)
 HOSTS_FILE = os.path.join(CONFIG_DIR, "hosts.json")
 SNIPPET_FILE = os.path.join(CONFIG_DIR, "snippet.json")
 GREEN = "\033[92m"
+MAGENTA = "\033[35m"
+RED = "\033[31m"
 RESET = "\033[0m"
 
 def clear_screen():
@@ -31,16 +34,17 @@ def message(text, seconds=1):
 def title(text):
     clear_screen()
     width = shutil.get_terminal_size().columns
-    print("#" * width)
+    print("=" * width)
     print(f"{text:^{width}}")
-    print("#" * width)
+    print("=" * width)
     print()
 
 def main_menu():
     while True:
-        title(f"My Little Terminal - v{VERSION}")
+        title(f"My Little Terminal v{VERSION} - Main Menu")
         hosts = load_hosts()
         favorites = [host for host in hosts if host.get("favorite", False)]
+        host_names = {host["name"].lower(): host for host in hosts}
 
         if favorites:
             print("Favorites:")
@@ -55,7 +59,7 @@ def main_menu():
         print(" [i] Info & Support")
         print(" [q] Quit")
         print()
-        choice = input("Enter your choice: ").lower()   
+        choice = input("> Enter your choice: ").strip().lower()
 
         if choice == 'h':
             host_menu()
@@ -67,12 +71,13 @@ def main_menu():
             update_menu()
         elif choice == 'q':
             message("Exiting the program.")
-            break
+            sys.exit(0)
         elif choice.isdigit() and 1 <= int(choice) <= len(favorites):
-            selected_host = favorites[int(choice) - 1]
-            connect_host(selected_host)
+            connect_host(favorites[int(choice) - 1])
+        elif choice in host_names:
+            connect_host(host_names[choice])
         else:
-            message("Invalid choice. Please try again.")
+            message(f"{RED}Invalid choice. Please try again.{RESET}")
 
 def build_remote_cmd():
     snippets = load_snippets()
@@ -81,9 +86,12 @@ def build_remote_cmd():
 
     alias_lines = []
     for s in snippets:
-        safe_cmd = s["cmd"].replace("'", "'\\''")
-        alias_lines.append(f"alias {s['name']}='{safe_cmd}'")
-
+        if "()" in s["cmd"]:
+            alias_lines.append(s["cmd"])
+        else:
+            safe_cmd = s["cmd"].replace("'", "'\\''")
+            alias_lines.append(f"alias {s['name']}='{safe_cmd}'")
+    
     aliases_block = "\n".join(alias_lines)
     return (
         "cat << 'EOF' > /tmp/mylt_rc\n"
@@ -107,22 +115,36 @@ def connect_host(host):
     remote_cmd = build_remote_cmd()
 
     if remote_cmd:
-        subprocess.run(["ssh", "-t", "-p", port, "-o", "HostKeyAlgorithms=+ssh-rsa", "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa", target, remote_cmd])
+        result = subprocess.run(["ssh", "-t", "-p", port, "-o", "HostKeyAlgorithms=+ssh-rsa", "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa", target, remote_cmd])
     else:
-        subprocess.run(["ssh", "-p", port, "-o", "HostKeyAlgorithms=+ssh-rsa", "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa", target])
+        result = subprocess.run(["ssh", "-p", port, "-o", "HostKeyAlgorithms=+ssh-rsa", "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa", target])
+
+    if result.returncode == 255:
+        print()
+        if input("Do you want to remove the saved host key? (y/n): ").lower() == "y":
+            rk_target = f"[{host['ip']}]:{port}" if port != "22" else host["ip"]
+            subprocess.run(["ssh-keygen", "-R", rk_target])
+            hosts = load_hosts()
+            for h in hosts:
+                if h["ip"] == host["ip"] and h["port"] == host["port"] and h["user"] == host["user"]:
+                    h["has_key"] = False
+            save_hosts(hosts)
 
     message("Connection closed.")
 
 def host_menu():
     while True:
-        title("Hosts")
+        title(f"My Little Terminal v{VERSION} - Hosts")
         hosts = load_hosts()
+        quick_select = {}
         if not hosts:
             print("No hosts available. Please add a host first.")
         else:
             for idx, host in enumerate(hosts, start=1):
-                fav_marker = " *" if host.get("favorite", False) else ""
+                fav_marker = f"{MAGENTA} *{RESET}" if host.get("favorite", False) else ""
                 print(f"[{idx}]{fav_marker} {host['name']} ({host['ip']})")
+                quick_select[str(idx)] = host
+                quick_select[host["name"].lower()] = host
 
         print()
         print("[a] Add Host")
@@ -131,7 +153,7 @@ def host_menu():
         print("[d] Delete Host")
         print("[b] Back to Main Menu")
         print()
-        choice = input("Enter your choice: ").lower()
+        choice = input("> Enter your choice: ").strip().lower()
 
         if choice == 'a':
             add_host()
@@ -143,11 +165,10 @@ def host_menu():
             delete_host()
         elif choice == 'b':
             return
-        elif choice.isdigit() and 1 <= int(choice) <= len(hosts):
-            selected_host = hosts[int(choice) - 1]
-            connect_host(selected_host)
+        elif choice in quick_select:
+            connect_host(quick_select[choice])
         else:
-            message("Invalid choice. Please try again.")
+            message(f"{RED}Invalid choice. Please try again.{RESET}")
 
 def load_hosts():
     try:
@@ -210,7 +231,7 @@ def edit_host():
             print(f"[{idx}] {host['name']} ({host['ip']})")
         print("[b] Back")
         print()
-        choice = input("Enter the number of the host to edit: ").lower()
+        choice = input("> Enter the number of the host to edit: ").lower()
     if choice == 'b':
         return
     elif choice.isdigit() and 1 <= int(choice) <= len(hosts):
@@ -238,7 +259,7 @@ def edit_host():
         save_hosts(hosts)
         message("Host updated!")
     else:
-        message("Invalid choice. Please try again.")
+        message(f"{RED}Invalid choice. Please try again.{RESET}")
 
 def mark_favorite():
     title("Mark/Unmark Favorite")
@@ -248,12 +269,12 @@ def mark_favorite():
         return
     else:
         for idx, host in enumerate(hosts, start=1):
-            fav_marker = " *" if host.get("favorite", False) else ""
+            fav_marker = f"{MAGENTA} *{RESET}" if host.get("favorite", False) else ""
             print(f"[{idx}]{fav_marker} {host['name']} ({host['ip']})")
 
         print("[b] Back")
         print()
-        choice = input("Enter the number of the host to toggle favorite status: ").lower()
+        choice = input("> Enter the number of the host to toggle favorite status: ").lower()
 
     if choice == 'b':
         return
@@ -264,7 +285,7 @@ def mark_favorite():
         status = "marked as favorite" if selected_host["favorite"] else "unmarked as favorite"
         message(f"{selected_host['name']} has been {status}.")
     else:
-        message("Invalid choice. Please try again.")
+        message(f"{RED}Invalid choice. Please try again.{RESET}")
 
 def delete_host():
     title("Delete Host")
@@ -278,7 +299,7 @@ def delete_host():
 
         print("[b] Back")
         print()
-        choice = input("Enter the number of the host to delete: ").lower()
+        choice = input("> Enter the number of the host to delete: ").lower()
 
     if choice == 'b':
         return
@@ -292,18 +313,18 @@ def delete_host():
         else:
             message("Deletion canceled.")
     else:
-        message("Invalid choice. Please try again.")
+        message(f"{RED}Invalid choice. Please try again.{RESET}")
 
 def key_menu():
     key_path = os.path.expanduser("~/.ssh/id_rsa")
 
     while True:
-        title("Keys")
+        title(f"My Little Terminal v{VERSION} - Keys")
         print("[c] Create SSH Key")
         print("[s] Send Key to Host")
         print("[b] Back to Main Menu")
         print()
-        choice = input("Enter your choice: ").lower()
+        choice = input("> Enter your choice: ").lower()
 
         if choice == 'c':
             os.makedirs(os.path.dirname(key_path), exist_ok=True)
@@ -315,7 +336,7 @@ def key_menu():
         elif choice == 'b':
             return
         else:
-            message("Invalid choice. Please try again.")
+            message(f"{RED}Invalid choice. Please try again.{RESET}")
 
 def send_key_menu():
     key_path = os.path.expanduser("~/.ssh/id_rsa")
@@ -333,11 +354,11 @@ def send_key_menu():
         title("Send Key to Host")
         hosts = load_hosts()
         for idx, host in enumerate(hosts, start=1):
-            mark = "✓" if host.get("has_key") else " "
+            mark = f"{GREEN}x{RESET}" if host.get("has_key") else " "
             print(f"[{idx}] [{mark}] {host['name']} ({host['ip']})")
         print("[b] Back")
         print()
-        choice = input("Enter the number of the host to send key: ").lower()
+        choice = input("> Enter the number of the host to send key: ").lower()
 
         if choice == 'b':
             return
@@ -356,7 +377,7 @@ def send_key_menu():
             print()
             input("Press Enter to continue...")
         else:
-            message("Invalid choice. Please try again.")
+            message(f"{RED}Invalid choice. Please try again.{RESET}")
 
 def load_snippets():
     try:
@@ -371,7 +392,7 @@ def save_snippets(snippets):
 
 def snippet_menu():
     while True:
-        title("Snippets")
+        title(f"My Little Terminal v{VERSION} - Snippets")
         snippets = load_snippets()
         if not snippets:
             print("No snippets available. Please add a snippet first.")
@@ -385,7 +406,7 @@ def snippet_menu():
         print("[d] Delete Snippet")
         print("[b] Back to Main Menu")
         print()
-        choice = input("Enter your choice: ").lower()
+        choice = input("> Enter your choice: ").lower()
 
         if choice == 'a':
             add_snippet()
@@ -399,7 +420,7 @@ def snippet_menu():
             selected_snippet = snippets[int(choice) - 1]
             message(f"{selected_snippet['name']} -> {selected_snippet['cmd']}", seconds=2)
         else:
-            message("Invalid choice. Please try again.")
+            message(f"{RED}Invalid choice. Please try again.{RESET}")
 
 def add_snippet():
     title("Add Snippet or press CTRL+C for escape")
@@ -444,7 +465,7 @@ def edit_snippet():
             if choice.isdigit() and 1 <= int(choice) <= len(snippets):
                 snippet = snippets[int(choice) - 1]
                 break
-            print("Invalid choice. Please try again.")
+            print(f"{RED}Invalid choice. Please try again.{RESET}")
 
         name = input(f"Enter snippet name [{snippet['name']}]: ").strip() or snippet["name"]
         cmd = input(f"Enter command [{snippet['cmd']}]: ").strip() or snippet["cmd"]
@@ -470,7 +491,7 @@ def delete_snippet():
 
         print("[b] Back")
         print()
-        choice = input("Enter the number of the snippet to delete: ").lower()
+        choice = input("> Enter the number of the snippet to delete: ").lower()
 
     if choice == 'b':
         return
@@ -484,16 +505,16 @@ def delete_snippet():
         else:
             message("Deletion canceled.")
     else:
-        message("Invalid choice. Please try again.")
+        message(f"{RED}Invalid choice. Please try again.{RESET}")
 
 def update_menu():
     while True:
-        title(f"Info & Support - My Little Terminal - v{VERSION}")
+        title(f"My Little Terminal v{VERSION} - Info & Support")
         print("[c] Check for New Version")
         print("[s] Open Support Forum")
         print("[b] Back to Main Menu")
         print()
-        choice = input("Enter your choice: ").lower()
+        choice = input("> Enter your choice: ").lower()
 
         if choice == 'c':
             check_updates()
@@ -503,7 +524,7 @@ def update_menu():
         elif choice == 'b':
             return
         else:
-            message("Invalid choice. Please try again.")
+            message(f"{RED}Invalid choice. Please try again.{RESET}")
 
     
 def check_updates():
