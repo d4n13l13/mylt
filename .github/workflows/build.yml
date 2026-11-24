@@ -16,7 +16,7 @@ jobs:
         include:
           - os: ubuntu-22.04
             name: mylt-linux
-            artifact: dist/My-Little-Terminal-x86_64.AppImage
+            artifact: dist/mylt-linux.zip
           - os: macos-15
             name: mylt-macos-arm64
             artifact: dist/mylt-macos-arm64.zip
@@ -82,13 +82,13 @@ jobs:
           Categories=Utility;TerminalEmulator;
           EOF
 
-          # Minimales 1x1 PNG als Pflicht-Dummy-Icon für appimagetool
           python3 -c 'import base64; open("AppDir/mylt.png", "wb").write(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="))'
 
           wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool-x86_64.AppImage
           ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir "dist/My-Little-Terminal-x86_64.AppImage"
           chmod +x "dist/My-Little-Terminal-x86_64.AppImage"
+          cd dist && zip -r ${{ matrix.name }}.zip My-Little-Terminal-x86_64.AppImage
 
       - name: Package macOS binary
         if: runner.os == 'macOS'
