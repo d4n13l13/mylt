@@ -11,6 +11,7 @@ permissions:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-22.04
@@ -47,14 +48,51 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           chmod +x dist/${{ matrix.name }}
-          cd dist && zip -r ${{ matrix.name }}.zip ${{ matrix.name }}
+          cat << 'EOF' > "dist/My Little Terminal.desktop"
+          [Desktop Entry]
+          Type=Application
+          Name=My Little Terminal
+          Exec=bash -c '"$(dirname "$1")/mylt-linux"' _ %k
+          Terminal=true
+          Icon=utilities-terminal
+          EOF
+          chmod +x "dist/My Little Terminal.desktop"
+          cd dist && zip -r ${{ matrix.name }}.zip ${{ matrix.name }} "My Little Terminal.desktop"
 
       - name: Package macOS binary
         if: runner.os == 'macOS'
         run: |
-          mv dist/${{ matrix.name }} dist/${{ matrix.name }}.command
-          chmod +x dist/${{ matrix.name }}.command
-          cd dist && zip -r ${{ matrix.name }}.zip ${{ matrix.name }}.command
+          APP_DIR="dist/My Little Terminal.app"
+          mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+          mv "dist/${{ matrix.name }}" "$APP_DIR/Contents/MacOS/mylt-bin"
+          chmod +x "$APP_DIR/Contents/MacOS/mylt-bin"
+
+          cat << 'EOF' > "$APP_DIR/Contents/MacOS/launcher"
+          #!/bin/bash
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          osascript -e "tell application \"Terminal\" to do script \"'$DIR/mylt-bin'; exit\"" -e "tell application \"Terminal\" to activate"
+          EOF
+          chmod +x "$APP_DIR/Contents/MacOS/launcher"
+
+          cat << 'EOF' > "$APP_DIR/Contents/Info.plist"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key>
+            <string>launcher</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.d4n13l13.mylt</string>
+            <key>CFBundleName</key>
+            <string>My Little Terminal</string>
+            <key>CFBundleIconFile</key>
+            <string>icon.icns</string>
+          </dict>
+          </plist>
+          EOF
+
+          [ -f icon.icns ] && cp icon.icns "$APP_DIR/Contents/Resources/icon.icns"
+          cd dist && zip -r "${{ matrix.name }}.zip" "My Little Terminal.app"
 
       - name: Package Windows binary
         if: runner.os == 'Windows'
