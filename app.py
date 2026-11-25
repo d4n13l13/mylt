@@ -120,16 +120,30 @@ def connect_host(host):
         result = subprocess.run(["ssh", "-p", port, "-o", "HostKeyAlgorithms=+ssh-rsa", "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa", target])
 
     if result.returncode == 255:
-        print()
-        if input("Do you want to remove the saved host key? (y/n): ").lower() == "y":
-            rk_target = f"[{host['ip']}]:{port}" if port != "22" else host["ip"]
-            subprocess.run(["ssh-keygen", "-R", rk_target])
-            hosts = load_hosts()
-            for h in hosts:
-                if h["ip"] == host["ip"] and h["port"] == host["port"] and h["user"] == host["user"]:
-                    h["has_key"] = False
-            save_hosts(hosts)
+        err = subprocess.run(
+            [
+                "ssh",
+                "-o", "BatchMode=yes",
+                "-o", "ConnectTimeout=2",
+                "-o", "HostKeyAlgorithms=+ssh-rsa",
+                "-p", port,
+                target,
+                "exit"
+            ],
+            capture_output=True, text=True
+        ).stderr
+        if "REMOTE HOST IDENTIFICATION HAS CHANGED" in err:
+            print()
+            if input("Do you want to remove the saved host key? (y/n): ").lower() == "y":
+                rk_target = f"[{host['ip']}]:{port}" if port != "22" else host["ip"]
+                subprocess.run(["ssh-keygen", "-R", rk_target])
+                hosts = load_hosts()
+                for h in hosts:
+                    if h["ip"] == host["ip"] and h["port"] == host["port"] and h["user"] == host["user"]:
+                        h["has_key"] = False
+                save_hosts(hosts)
 
+            
     message("Connection closed.")
 
 def host_menu():
