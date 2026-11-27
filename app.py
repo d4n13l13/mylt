@@ -14,11 +14,12 @@ except ImportError:
     certifi = None
 
 
-VERSION = "0.4"
+VERSION = "0.5"
 CONFIG_DIR = os.path.join(os.path.expanduser("~"), ".mylt")
 os.makedirs(CONFIG_DIR, exist_ok=True)
 HOSTS_FILE = os.path.join(CONFIG_DIR, "hosts.json")
-SNIPPET_FILE = os.path.join(CONFIG_DIR, "snippet.json")
+SNIPPET_FILE = os.path.join(CONFIG_DIR, "aliases.json")
+USERRC_FILE = os.path.join(CONFIG_DIR, "user_rc")
 GREEN = "\033[92m"
 MAGENTA = "\033[35m"
 RED = "\033[31m"
@@ -41,47 +42,59 @@ def title(text):
 
 def main_menu():
     while True:
-        title(f"My Little Terminal v{VERSION} - Main Menu")
-        hosts = load_hosts()
-        favorites = [host for host in hosts if host.get("favorite", False)]
-        host_names = {host["name"].lower(): host for host in hosts}
+        try:
+            title(f"My Little Terminal v{VERSION} - Main Menu")
+            hosts = load_hosts()
+            favorites = [host for host in hosts if host.get("favorite", False)]
+            host_names = {host["name"].lower(): host for host in hosts}
 
-        if favorites:
-            print("Favorites:")
-            for idx, host in enumerate(favorites, start=1):
-                print(f" [{idx}] {host['name']} ({host['ip']})")
-            print()
+            if favorites:
+                print("Favorites:")
+                for idx, host in enumerate(favorites, start=1):
+                    print(f" [{idx}] {host['name']} ({host['ip']})")
+                print()
     
-        print("Menu:")
-        print(" [h] Hosts")
-        print(" [k] Keys")
-        print(" [s] Snippets")
-        print(" [i] Info & Support")
-        print(" [q] Quit")
-        print()
-        choice = input("> Enter your choice: ").strip().lower()
+            print("Menu:")
+            print(" [h] Hosts")
+            print(" [k] Keys")
+            print(" [a] Aliases & Functions")
+            print(" [i] Info & Support")
+            print(" [q] Quit")
+            print()
+            choice = input("> Enter your choice: ").strip().lower()
 
-        if choice == 'h':
-            host_menu()
-        elif choice == 'k':
-            key_menu()
-        elif choice == 's':
-            snippet_menu()
-        elif choice == 'i':
-            update_menu()
-        elif choice == 'q':
-            message("Exiting the program.")
-            sys.exit(0)
-        elif choice.isdigit() and 1 <= int(choice) <= len(favorites):
-            connect_host(favorites[int(choice) - 1])
-        elif choice in host_names:
-            connect_host(host_names[choice])
-        else:
-            message(f"{RED}Invalid choice. Please try again.{RESET}")
-
+            if choice == 'h':
+                host_menu()
+            elif choice == 'k':
+                key_menu()
+            elif choice == 'a':
+                snippet_menu()
+            elif choice == 'i':
+                update_menu()
+            elif choice == 'q':
+                message("Exiting the program.")
+                sys.exit(0)
+            elif choice.isdigit() and 1 <= int(choice) <= len(favorites):
+                connect_host(favorites[int(choice) - 1])
+            elif choice in host_names:
+                connect_host(host_names[choice])
+            else:
+                message(f"{RED}Invalid choice. Please try again.{RESET}")
+        except KeyboardInterrupt:
+                print()
+                message("Operation cancelled.")
+                continue
+        
 def build_remote_cmd():
     snippets = load_snippets()
-    if not snippets:
+    user_rc = ""
+    for candidate in (USERRC_FILE, f"{USERRC_FILE}.txt"):
+        if os.path.exists(candidate):
+            with open(candidate, "r", encoding="utf-8") as file:
+                user_rc = file.read().replace("\r\n", "\n").strip()
+            break
+
+    if not snippets and not user_rc:
         return None
 
     alias_lines = []
@@ -91,6 +104,9 @@ def build_remote_cmd():
         else:
             safe_cmd = s["cmd"].replace("'", "'\\''")
             alias_lines.append(f"alias {s['name']}='{safe_cmd}'")
+
+    if user_rc:
+        alias_lines.append(user_rc)
     
     aliases_block = "\n".join(alias_lines)
     return (
@@ -105,6 +121,17 @@ def build_remote_cmd():
         "else ENV=/tmp/mylt_rc exec sh; fi"
     )
 
+def build_ssh_args(host, extra_opts=None):
+    args = ["ssh", "-p", str(host["port"])]
+    if host.get("legacy_ssh"):
+        args.extend([
+            "-o", "HostKeyAlgorithms=+ssh-rsa",
+            "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa"
+        ])
+    if extra_opts:
+        args.extend(extra_opts)
+    return args
+
 def connect_host(host):
     if not host.get("user") or not host.get("ip"):
         message("Host information is incomplete. Please edit the host details.")
@@ -115,35 +142,48 @@ def connect_host(host):
     remote_cmd = build_remote_cmd()
 
     if remote_cmd:
-        result = subprocess.run(["ssh", "-t", "-p", port, "-o", "HostKeyAlgorithms=+ssh-rsa", "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa", target, remote_cmd])
+        cmd = build_ssh_args(host, ["-t"]) + [target, remote_cmd]
     else:
-        result = subprocess.run(["ssh", "-p", port, "-o", "HostKeyAlgorithms=+ssh-rsa", "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa", target])
+        cmd = build_ssh_args(host) + [target]
+
+    result = subprocess.run(cmd)
 
     if result.returncode == 255:
-        err = subprocess.run(
-            [
-                "ssh",
-                "-o", "BatchMode=yes",
-                "-o", "ConnectTimeout=2",
-                "-o", "HostKeyAlgorithms=+ssh-rsa",
-                "-p", port,
-                target,
-                "exit"
-            ],
-            capture_output=True, text=True
-        ).stderr
+        check_cmd = build_ssh_args(host, ["-o", "BatchMode=yes", "-o", "ConnectTimeout=2"]) + [target, "exit"]
+        err = subprocess.run(check_cmd, capture_output=True, text=True).stderr
+
         if "REMOTE HOST IDENTIFICATION HAS CHANGED" in err:
             print()
             if input("Do you want to remove the saved host key? (y/n): ").lower() == "y":
                 rk_target = f"[{host['ip']}]:{port}" if port != "22" else host["ip"]
-                subprocess.run(["ssh-keygen", "-R", rk_target])
+                res = subprocess.run(["ssh-keygen", "-R", rk_target])
+                if res.returncode == 0:
+                    hosts = load_hosts()
+                    for h in hosts:
+                        if h["ip"] == host["ip"] and h["port"] == host["port"] and h["user"] == host["user"]:
+                            h["has_key"] = False
+                    save_hosts(hosts)
+                    host["has_key"] = False
+
+                    if input("Connect now? (y/n): ").lower() == "y":
+                        connect_host(host)
+                        return
+
+        elif not host.get("legacy_ssh") and (
+            "no matching host key type found" in err
+            or "no matching key exchange method" in err
+        ):
+            print()
+            if input("Host requires legacy ssh-rsa support. Enable for this host and connect? (y/n): ").lower() == "y":
+                host["legacy_ssh"] = True
                 hosts = load_hosts()
                 for h in hosts:
                     if h["ip"] == host["ip"] and h["port"] == host["port"] and h["user"] == host["user"]:
-                        h["has_key"] = False
+                        h["legacy_ssh"] = True
                 save_hosts(hosts)
+                connect_host(host)
+                return
 
-            
     message("Connection closed.")
 
 def host_menu():
@@ -235,22 +275,23 @@ def add_host():
     message("Host saved!")
 
 def edit_host():
-    title("Edit Host or press CTRL+C for escape")
-    hosts = load_hosts()
-    if not hosts:
-        message("No hosts available. Please add a host first.")
-        return
-    else:
+    try:
+        title("Edit Host or press CTRL+C for escape")
+        hosts = load_hosts()
+        if not hosts:
+            message("No hosts available. Please add a host first.")
+            return
+
         for idx, host in enumerate(hosts, start=1):
             print(f"[{idx}] {host['name']} ({host['ip']})")
         print("[b] Back")
         print()
         choice = input("> Enter the number of the host to edit: ").lower()
-    if choice == 'b':
-        return
-    elif choice.isdigit() and 1 <= int(choice) <= len(hosts):
-        selected_host = hosts[int(choice) - 1]
-        try:
+    
+        if choice == 'b':
+            return
+        elif choice.isdigit() and 1 <= int(choice) <= len(hosts):
+            selected_host = hosts[int(choice) - 1]
             name = input(f"Enter new name (current: {selected_host['name']}): ").strip() or selected_host['name']
             ip = input(f"Enter new IP (current: {selected_host['ip']}): ").strip() or selected_host['ip']
             user = input(f"Enter new username (current: {selected_host['user']}): ").strip() or selected_host['user']
@@ -259,21 +300,21 @@ def edit_host():
                 if port.isdigit():
                     break
                 print("Invalid port. Please enter a valid port number.")
-        except KeyboardInterrupt:
+        
+            selected_host.update({
+                "name": name,
+                "ip": ip,
+                "user": user,
+                "port": int(port)
+            })
+            save_hosts(hosts)
+            message("Host updated!")
+        else:
+            message(f"{RED}Invalid choice. Please try again.{RESET}")
+    except KeyboardInterrupt:
             print()
             message("Operation cancelled.")
             return
-
-        selected_host.update({
-            "name": name,
-            "ip": ip,
-            "user": user,
-            "port": int(port)
-        })
-        save_hosts(hosts)
-        message("Host updated!")
-    else:
-        message(f"{RED}Invalid choice. Please try again.{RESET}")
 
 def mark_favorite():
     title("Mark/Unmark Favorite")
@@ -378,13 +419,25 @@ def send_key_menu():
             return
         elif choice.isdigit() and 1 <= int(choice) <= len(hosts):
             h = hosts[int(choice) - 1]
-            pub_key = open(f"{key_path}.pub", encoding="utf-8").read().strip() + "\n"
+            with open(f"{key_path}.pub", "r", encoding="utf-8") as file:
+                pub_key = file.read().strip() + "\n"
             cmd = "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
             result = subprocess.run(
-                ["ssh", "-p", str(h["port"]), "-o", "HostKeyAlgorithms=+ssh-rsa", "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa", f"{h['user']}@{h['ip']}", cmd],
+                build_ssh_args(h) + [f"{h['user']}@{h['ip']}", cmd],
                 input=pub_key,
                 text=True
             )
+
+            if result.returncode == 255 and not h.get("legacy_ssh"):
+                if input("Connection failed. Retry with legacy ssh-rsa? (y/n):  ").lower() == "y":
+                    h["legacy_ssh"] = True
+                    save_hosts(hosts)
+                    result = subprocess.run(
+                        build_ssh_args(h) + [f"{h['user']}@{h['ip']}", cmd],
+                        input=pub_key,
+                        text=True
+                    )           
+            
             if result.returncode == 0:
                 h["has_key"] = True
                 save_hosts(hosts)
@@ -406,18 +459,18 @@ def save_snippets(snippets):
 
 def snippet_menu():
     while True:
-        title(f"My Little Terminal v{VERSION} - Snippets")
+        title(f"My Little Terminal v{VERSION} - Aliases & Functions")
         snippets = load_snippets()
         if not snippets:
-            print("No snippets available. Please add a snippet first.")
+            print("No Aliases & Functions available. Please add Aliases & Functions first.")
         else:
             for idx, snippet in enumerate(snippets, start=1):
                 print(f"[{idx}] {snippet['name']}")
         print()
         print("Menu:")
-        print("[a] Add Snippet")
-        print("[e] Edit Snippet")
-        print("[d] Delete Snippet")
+        print("[a] Add Aliases & Functions")
+        print("[e] Edit Aliases & Functions")
+        print("[d] Delete Aliases & Functions")
         print("[b] Back to Main Menu")
         print()
         choice = input("> Enter your choice: ").lower()
@@ -437,13 +490,13 @@ def snippet_menu():
             message(f"{RED}Invalid choice. Please try again.{RESET}")
 
 def add_snippet():
-    title("Add Snippet or press CTRL+C for escape")
+    title("Add Aliases & Functions or press CTRL+C for escape")
     try:
         while True:
-            name = input("Enter snippet name: ").strip()
+            name = input("Enter Aliases & Functions name: ").strip()
             if name:
                 break
-            print("Snippet name cannot be empty!")
+            print("Aliases & Functions name cannot be empty!")
         while True:
             cmd = input("Enter command: ").strip()
             if cmd:
@@ -460,13 +513,13 @@ def add_snippet():
         "cmd": cmd
     })
     save_snippets(snippets)
-    message("Snippet saved!")
+    message("Aliases & Functions saved!")
 
 def edit_snippet():
-    title("Edit Snippet or press CTRL+C for escape")
+    title("Edit Aliases & Functions or press CTRL+C for escape")
     snippets = load_snippets()
     if not snippets:
-        message("No snippets available.")
+        message("No Aliases & Functions available.")
         return
 
     for idx, snippet in enumerate(snippets, start=1):
@@ -475,13 +528,13 @@ def edit_snippet():
 
     try:
         while True:
-            choice = input("Enter snippet number to edit: ").strip()
+            choice = input("Enter Aliases & Functions number to edit: ").strip()
             if choice.isdigit() and 1 <= int(choice) <= len(snippets):
                 snippet = snippets[int(choice) - 1]
                 break
             print(f"{RED}Invalid choice. Please try again.{RESET}")
 
-        name = input(f"Enter snippet name [{snippet['name']}]: ").strip() or snippet["name"]
+        name = input(f"Enter Aliases & Functions name [{snippet['name']}]: ").strip() or snippet["name"]
         cmd = input(f"Enter command [{snippet['cmd']}]: ").strip() or snippet["cmd"]
     except KeyboardInterrupt:
         print()
@@ -491,13 +544,13 @@ def edit_snippet():
     snippet["name"] = name
     snippet["cmd"] = cmd
     save_snippets(snippets)
-    message("Snippet updated!")
+    message("Aliases & Functions updated!")
 
 def delete_snippet():
-    title("Delete Snippet")
+    title("Delete Aliases & Functions")
     snippets = load_snippets()
     if not snippets:
-        message("No snippets available. Please add a Snippet first.")
+        message("No Aliases & Functions available. Please add Aliases & Functions first.")
         return
     else:
         for idx, snippet in enumerate(snippets, start=1):
@@ -505,7 +558,7 @@ def delete_snippet():
 
         print("[b] Back")
         print()
-        choice = input("> Enter the number of the snippet to delete: ").lower()
+        choice = input("> Enter the number of the Aliases & Functions to delete: ").lower()
 
     if choice == 'b':
         return
@@ -515,7 +568,7 @@ def delete_snippet():
         if confirm == 'y':
             snippets.remove(selected_snippet)
             save_snippets(snippets)
-            message("Snippet deleted!")
+            message("Aliases & Functions deleted!")
         else:
             message("Deletion canceled.")
     else:
